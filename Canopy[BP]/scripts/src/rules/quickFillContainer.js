@@ -5,6 +5,7 @@ import { QuickFillContainerPolicy } from "../classes/quickfill/QuickFillContaine
 
 class QuickFillContainer extends AbilityRule {
     bannedContainers = ['minecraft:beacon', 'minecraft:jukebox', 'minecraft:lectern'];
+    interactionClipboardContainerTypes = ['minecart_chest', 'minecart_hopper', 'chest_boat'];
     
     constructor() {
         super({
@@ -39,6 +40,8 @@ class QuickFillContainer extends AbilityRule {
         const inventory = entity?.getComponent(EntityComponentTypes.Inventory);
         if (!inventory?.container)
             return;
+        if (this.interactionClipboardContainerTypes.includes(inventory.containerType))
+            return inventory.container;
         if (!['minecraft:donkey', 'minecraft:mule', 'minecraft:llama', 'minecraft:trader_llama'].includes(entity.typeId))
             return;
         if (inventory.containerType !== 'horse' || !entity.hasComponent(EntityComponentTypes.IsChested))
@@ -108,6 +111,7 @@ class QuickFillContainer extends AbilityRule {
         if (!player || !this.isEnabledForPlayer(player))
             return;
 
+        const inventory = entity?.getComponent(EntityComponentTypes.Inventory);
         const entityInv = this.getEntityContainer(entity);
         const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
         if (!playerInv || !entityInv)
@@ -115,11 +119,25 @@ class QuickFillContainer extends AbilityRule {
 
         const handItemStack = event.itemStack;
         const clipboard = QuickFillClipboardController.get(player);
+        const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
+        const usesInteractionClipboardControls = this.interactionClipboardContainerTypes.includes(inventory?.containerType);
+
+        if (usesInteractionClipboardControls && !clipboard && !handItemStack && !playerIsSneaking) {
+            event.cancel = true;
+            system.run(() => QuickFillClipboardController.copy(player, entity, entityInv));
+            return;
+        }
+
+        if (usesInteractionClipboardControls && clipboard && !handItemStack && playerIsSneaking) {
+            event.cancel = true;
+            system.run(() => QuickFillClipboardController.deactivate(player));
+            return;
+        }
+
         if (!clipboard && (!handItemStack || !QuickFillContainerPolicy.canInsertItem(entity, handItemStack)))
             return;
         event.cancel = true;
 
-        const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
         system.run(() => {
             if (clipboard) {
                 QuickFillClipboardController.apply(player, entity, clipboard, playerIsSneaking, entityInv);
@@ -138,6 +156,10 @@ class QuickFillContainer extends AbilityRule {
         const player = event.damageSource?.damagingEntity;
         const entity = event.hurtEntity;
         if (player?.typeId !== 'minecraft:player' || event.damageSource?.damagingProjectile || !this.isEnabledForPlayer(player))
+            return;
+
+        const inventory = entity?.getComponent(EntityComponentTypes.Inventory);
+        if (this.interactionClipboardContainerTypes.includes(inventory?.containerType))
             return;
 
         const entityInv = this.getEntityContainer(entity);

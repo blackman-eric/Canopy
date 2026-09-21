@@ -22,11 +22,11 @@ function makeBlock(container, typeId = 'minecraft:chest') {
     };
 }
 
-function makeEntity(container, typeId = 'minecraft:llama', isChested = true) {
+function makeEntity(container, typeId = 'minecraft:llama', isChested = true, containerType = 'horse') {
     return {
         typeId,
         localizationKey: `entity.${typeId}`,
-        getComponent: vi.fn(component => component === EntityComponentTypes.Inventory ? { container, containerType: 'horse' } : undefined),
+        getComponent: vi.fn(component => component === EntityComponentTypes.Inventory ? { container, containerType } : undefined),
         hasComponent: vi.fn(component => component === EntityComponentTypes.IsChested && isChested)
     };
 }
@@ -245,6 +245,65 @@ describe('quickFillContainer', () => {
         expect(quickFillContainer.getEntityContainer(traderLlama)?.size).toBe(15);
         expect(quickFillContainer.getEntityContainer(horse)).toBeUndefined();
         expect(quickFillContainer.getEntityContainer(unchestedLlama)).toBeUndefined();
+    });
+
+    test('POC recognizes minecart and chest boat storage', () => {
+        const chestMinecart = makeEntity(new Container({ size: 27 }), 'minecraft:chest_minecart', false, 'minecart_chest');
+        const hopperMinecart = makeEntity(new Container({ size: 5 }), 'minecraft:hopper_minecart', false, 'minecart_hopper');
+        const chestBoat = makeEntity(new Container({ size: 27 }), 'minecraft:chest_boat', false, 'chest_boat');
+
+        expect(quickFillContainer.getEntityContainer(chestMinecart)?.size).toBe(27);
+        expect(quickFillContainer.getEntityContainer(hopperMinecart)?.size).toBe(5);
+        expect(quickFillContainer.getEntityContainer(chestBoat)?.size).toBe(27);
+    });
+
+    test('POC empty-hand interaction copies vehicle storage', () => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entityInv = new Container({ size: 27 });
+        const entity = makeEntity(entityInv, 'minecraft:chest_minecart', false, 'minecart_chest');
+
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        vi.spyOn(QuickFillClipboardController, 'get').mockReturnValue(undefined);
+        const copy = vi.spyOn(QuickFillClipboardController, 'copy').mockImplementation(() => {});
+        vi.spyOn(system, 'run').mockImplementation(callback => callback());
+
+        const event = { player, target: entity, itemStack: undefined, cancel: false };
+        quickFillContainer.onPlayerInteractWithEntity(event);
+
+        expect(event.cancel).toBe(true);
+        expect(copy).toHaveBeenCalledWith(player, entity, entityInv);
+    });
+
+    test('POC sneak + empty-hand interaction deactivates the clipboard', () => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entityInv = new Container({ size: 27 });
+        const entity = makeEntity(entityInv, 'minecraft:chest_boat', false, 'chest_boat');
+
+        player.inputInfo.getButtonState.mockReturnValue(ButtonState.Pressed);
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        vi.spyOn(QuickFillClipboardController, 'get').mockReturnValue({});
+        const deactivate = vi.spyOn(QuickFillClipboardController, 'deactivate').mockImplementation(() => {});
+        vi.spyOn(system, 'run').mockImplementation(callback => callback());
+
+        const event = { player, target: entity, itemStack: undefined, cancel: false };
+        quickFillContainer.onPlayerInteractWithEntity(event);
+
+        expect(event.cancel).toBe(true);
+        expect(deactivate).toHaveBeenCalledWith(player);
+    });
+
+    test('POC vehicle storage does not use attack-to-copy controls', () => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entity = makeEntity(new Container({ size: 27 }), 'minecraft:chest_minecart', false, 'minecart_chest');
+
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        const copy = vi.spyOn(QuickFillClipboardController, 'copy').mockImplementation(() => {});
+
+        const event = { hurtEntity: entity, damageSource: { damagingEntity: player }, cancel: false };
+        quickFillContainer.onEntityHurt(event);
+
+        expect(event.cancel).toBe(false);
+        expect(copy).not.toHaveBeenCalled();
     });
 
     test('direct QuickFill works with supported entity storage', () => {
