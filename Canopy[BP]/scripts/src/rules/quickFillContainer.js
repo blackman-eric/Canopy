@@ -9,18 +9,41 @@ class QuickFillContainer extends AbilityRule {
     constructor() {
         super({
             identifier: 'quickFillContainer',
-            wikiDescription: 'With an arrow in the top left of your inventory (slot 9), interact with a container while holding an item to move matching items into it; sneak to reverse. Break a container to copy it to the clipboard, interact to paste, sneak + interact to remove matching clipboard items, and sneak + break to deactivate the clipboard.',
+            wikiDescription: 'With an arrow in the top left of your inventory (slot 9), interact with a container while holding an item to move matching items into it; sneak to reverse. Break a block container or attack a supported storage entity to copy it. With the clipboard active, interact to paste, sneak + interact to remove, and sneak + break/attack to deactivate it.',
             onEnableCallback: () => {
                 world.beforeEvents.playerInteractWithBlock.subscribe(this.onPlayerInteractWithBlockBound);
                 world.beforeEvents.playerBreakBlock.subscribe(this.onPlayerBreakBlockBound);
+                world.beforeEvents.playerInteractWithEntity.subscribe(this.onPlayerInteractWithEntityBound);
+                world.beforeEvents.entityHurt.subscribe(this.onEntityHurtBound);
             },
             onDisableCallback: () => {
                 world.beforeEvents.playerInteractWithBlock.unsubscribe(this.onPlayerInteractWithBlockBound);
                 world.beforeEvents.playerBreakBlock.unsubscribe(this.onPlayerBreakBlockBound);
+                world.beforeEvents.playerInteractWithEntity.unsubscribe(this.onPlayerInteractWithEntityBound);
+                world.beforeEvents.entityHurt.unsubscribe(this.onEntityHurtBound);
             }
         }, { slotNumber: 9 });
         this.onPlayerInteractWithBlockBound = this.onPlayerInteractWithBlock.bind(this);
         this.onPlayerBreakBlockBound = this.onPlayerBreakBlock.bind(this);
+        this.onPlayerInteractWithEntityBound = this.onPlayerInteractWithEntity.bind(this);
+        this.onEntityHurtBound = this.onEntityHurt.bind(this);
+    }
+
+    getBlockContainer(player, block) {
+        if (block?.typeId === 'minecraft:ender_chest')
+            return player.getComponent(EntityComponentTypes.EnderInventory)?.container;
+        return block?.getComponent(BlockComponentTypes.Inventory)?.container;
+    }
+
+    getEntityContainer(entity) {
+        const inventory = entity?.getComponent(EntityComponentTypes.Inventory);
+        if (!inventory?.container)
+            return;
+        if (!['minecraft:donkey', 'minecraft:mule', 'minecraft:llama', 'minecraft:trader_llama'].includes(entity.typeId))
+            return;
+        if (inventory.containerType !== 'horse' || !entity.hasComponent(EntityComponentTypes.IsChested))
+            return;
+        return inventory.container;
     }
 
     onPlayerInteractWithBlock(event) {
@@ -29,7 +52,7 @@ class QuickFillContainer extends AbilityRule {
         if (!player || !this.isEnabledForPlayer(player) || this.bannedContainers.includes(block?.typeId))
             return;
 
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
+        const blockInv = this.getBlockContainer(player, block);
         const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
         if (!playerInv || !blockInv)
             return;
@@ -43,15 +66,15 @@ class QuickFillContainer extends AbilityRule {
         const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
         system.run(() => {
             if (clipboard) {
-                QuickFillClipboardController.apply(player, block, clipboard, playerIsSneaking);
+                QuickFillClipboardController.apply(player, block, clipboard, playerIsSneaking, blockInv);
                 return;
             }
             if (playerIsSneaking)
-                this.transferToPlayer(player, block, handItemStack);
+                this.transferToPlayer(player, block, handItemStack, blockInv);
             else if (player.getGameMode() === GameMode.Creative)
-                this.fillCreative(player, block, handItemStack);
+                this.fillCreative(player, block, handItemStack, blockInv);
             else
-                this.transferToContainer(player, block, handItemStack);
+                this.transferToContainer(player, block, handItemStack, blockInv);
         });
     }
 
@@ -60,7 +83,9 @@ class QuickFillContainer extends AbilityRule {
         const block = event.block;
         if (!player || !this.isEnabledForPlayer(player) || this.bannedContainers.includes(block?.typeId))
             return;
-        if (!block.getComponent(BlockComponentTypes.Inventory)?.container)
+
+        const blockInv = this.getBlockContainer(player, block);
+        if (!blockInv)
             return;
 
         const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
@@ -73,21 +98,76 @@ class QuickFillContainer extends AbilityRule {
                 QuickFillClipboardController.deactivate(player);
                 return;
             }
-            QuickFillClipboardController.copy(player, block);
+            QuickFillClipboardController.copy(player, block, blockInv);
         });
     }
 
-    fillCreative(player, block, itemStack) {
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
-        if (!blockInv)
+    onPlayerInteractWithEntity(event) {
+        const player = event.player;
+        const entity = event.target;
+        if (!player || !this.isEnabledForPlayer(player))
+            return;
+
+        const entityInv = this.getEntityContainer(entity);
+        const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
+        if (!playerInv || !entityInv)
+            return;
+
+        const handItemStack = event.itemStack;
+        const clipboard = QuickFillClipboardController.get(player);
+        if (!clipboard && (!handItemStack || !QuickFillContainerPolicy.canInsertItem(entity, handItemStack)))
+            return;
+        event.cancel = true;
+
+        const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
+        system.run(() => {
+            if (clipboard) {
+                QuickFillClipboardController.apply(player, entity, clipboard, playerIsSneaking, entityInv);
+                return;
+            }
+            if (playerIsSneaking)
+                this.transferToPlayer(player, entity, handItemStack, entityInv);
+            else if (player.getGameMode() === GameMode.Creative)
+                this.fillCreative(player, entity, handItemStack, entityInv);
+            else
+                this.transferToContainer(player, entity, handItemStack, entityInv);
+        });
+    }
+
+    onEntityHurt(event) {
+        const player = event.damageSource?.damagingEntity;
+        const entity = event.hurtEntity;
+        if (player?.typeId !== 'minecraft:player' || event.damageSource?.damagingProjectile || !this.isEnabledForPlayer(player))
+            return;
+
+        const entityInv = this.getEntityContainer(entity);
+        if (!entityInv)
+            return;
+
+        const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
+        if (playerIsSneaking && !QuickFillClipboardController.get(player))
+            return;
+
+        event.cancel = true;
+        system.run(() => {
+            if (playerIsSneaking) {
+                QuickFillClipboardController.deactivate(player);
+                return;
+            }
+            QuickFillClipboardController.copy(player, entity, entityInv);
+        });
+    }
+
+    fillCreative(player, target, itemStack, targetInv = this.getBlockContainer(player, target)) {
+        if (!targetInv)
             return;
 
         let filledSlots = 0;
-        for (let slot = 0; slot < blockInv.size; slot++) {
-            if (!QuickFillContainerPolicy.canInsertItem(block, itemStack, slot))
+        for (let slot = 0; slot < targetInv.size; slot++) {
+            if (!QuickFillContainerPolicy.canInsertItem(target, itemStack, slot))
                 continue;
 
-            const current = blockInv.getItem(slot);
+            const current = targetInv.getItem(slot);
             if (current && !current.isStackableWith(itemStack))
                 continue;
             if (current && current.amount >= current.maxAmount)
@@ -97,35 +177,33 @@ class QuickFillContainer extends AbilityRule {
             const replacement = current?.clone() ?? itemStack.clone();
             replacement.amount = maxAmount;
             try {
-                blockInv.setItem(slot, replacement);
+                targetInv.setItem(slot, replacement);
                 filledSlots++;
             } catch {
                 continue;
             }
         }
 
-        const destinationFull = !filledSlots && blockInv.emptySlotsCount === 0;
-        this.sendFeedbackMessage(true, player, block, itemStack, filledSlots, destinationFull);
+        const destinationFull = !filledSlots && targetInv.emptySlotsCount === 0;
+        this.sendFeedbackMessage(true, player, target, itemStack, filledSlots, destinationFull);
     }
 
-    transferToPlayer(player, block, itemStack) {
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
+    transferToPlayer(player, target, itemStack, targetInv = this.getBlockContainer(player, target)) {
         const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
-        if (!blockInv || !playerInv)
+        if (!targetInv || !playerInv)
             return;
-        const changedSlots = this.transferAllItemType(blockInv, playerInv, itemStack.typeId);
-        const destinationFull = !changedSlots && playerInv.emptySlotsCount === 0 && this.hasItemType(blockInv, itemStack.typeId);
-        this.sendFeedbackMessage(false, player, block, itemStack, changedSlots, destinationFull);
+        const changedSlots = this.transferAllItemType(targetInv, playerInv, itemStack.typeId);
+        const destinationFull = !changedSlots && playerInv.emptySlotsCount === 0 && this.hasItemType(targetInv, itemStack.typeId);
+        this.sendFeedbackMessage(false, player, target, itemStack, changedSlots, destinationFull);
     }
 
-    transferToContainer(player, block, itemStack) {
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
+    transferToContainer(player, target, itemStack, targetInv = this.getBlockContainer(player, target)) {
         const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
-        if (!blockInv || !playerInv)
+        if (!targetInv || !playerInv)
             return;
-        const changedSlots = this.transferAllItemType(playerInv, blockInv, itemStack.typeId, block);
-        const destinationFull = !changedSlots && blockInv.emptySlotsCount === 0;
-        this.sendFeedbackMessage(true, player, block, itemStack, changedSlots, destinationFull);
+        const changedSlots = this.transferAllItemType(playerInv, targetInv, itemStack.typeId, target);
+        const destinationFull = !changedSlots && targetInv.emptySlotsCount === 0;
+        this.sendFeedbackMessage(true, player, target, itemStack, changedSlots, destinationFull);
     }
 
     hasItemType(container, itemTypeId) {
@@ -136,8 +214,8 @@ class QuickFillContainer extends AbilityRule {
         return false;
     }
 
-    transferAllItemType(fromContainer, toContainer, itemTypeId, block) {
-        const changedTargetSlots = block ? new Set() : undefined;
+    transferAllItemType(fromContainer, toContainer, itemTypeId, target) {
+        const changedTargetSlots = target ? new Set() : undefined;
         let changedSourceSlots = 0;
         for (let slotIndex = 0; slotIndex < fromContainer.size; slotIndex++) {
             const currFromItem = fromContainer.getItem(slotIndex);
@@ -145,20 +223,20 @@ class QuickFillContainer extends AbilityRule {
                 continue;
 
             const originalAmount = currFromItem.amount;
-            const untransferred = block ? this.addItemToBlock(block, toContainer, currFromItem, changedTargetSlots) : toContainer.addItem(currFromItem);
+            const untransferred = target ? this.addItemToTarget(target, toContainer, currFromItem, changedTargetSlots) : toContainer.addItem(currFromItem);
             if (originalAmount === (untransferred?.amount ?? 0))
                 continue;
 
             fromContainer.setItem(slotIndex, untransferred ?? null);
             changedSourceSlots++;
         }
-        return block ? changedTargetSlots.size : changedSourceSlots;
+        return target ? changedTargetSlots.size : changedSourceSlots;
     }
 
-    addItemToBlock(block, container, itemStack, changedSlots) {
+    addItemToTarget(target, container, itemStack, changedSlots) {
         let remainingAmount = itemStack.amount;
         for (let slot = 0; slot < container.size && remainingAmount > 0; slot++) {
-            if (!QuickFillContainerPolicy.canInsertItem(block, itemStack, slot))
+            if (!QuickFillContainerPolicy.canInsertItem(target, itemStack, slot))
                 continue;
 
             const current = container.getItem(slot);
@@ -178,7 +256,7 @@ class QuickFillContainer extends AbilityRule {
         }
 
         for (let slot = 0; slot < container.size && remainingAmount > 0; slot++) {
-            if (container.getItem(slot) || !QuickFillContainerPolicy.canInsertItem(block, itemStack, slot))
+            if (container.getItem(slot) || !QuickFillContainerPolicy.canInsertItem(target, itemStack, slot))
                 continue;
 
             const replacement = itemStack.clone();
@@ -199,7 +277,7 @@ class QuickFillContainer extends AbilityRule {
         return remaining;
     }
 
-    sendFeedbackMessage(isFilling, player, block, itemStack, changedSlots, destinationFull = false) {
+    sendFeedbackMessage(isFilling, player, target, itemStack, changedSlots, destinationFull = false) {
         if (!changedSlots) {
             if (destinationFull) {
                 player.onScreenDisplay.setActionBar(isFilling
@@ -217,7 +295,7 @@ class QuickFillContainer extends AbilityRule {
             feedback.rawtext.push({
                 translate: 'rules.quickFillContainer.filled',
                 with: { rawtext: [
-                    { translate: block.localizationKey },
+                    { translate: target.localizationKey },
                     { translate: itemStack.localizationKey }
                 ]}
             });
@@ -226,7 +304,7 @@ class QuickFillContainer extends AbilityRule {
                 translate: 'rules.quickFillContainer.taken',
                 with: { rawtext: [
                     { translate: itemStack.localizationKey },
-                    { translate: block.localizationKey }
+                    { translate: target.localizationKey }
                 ]}
             });
         }

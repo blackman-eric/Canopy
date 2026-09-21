@@ -8,12 +8,11 @@ export class QuickFillClipboardController {
         return QuickFillClipboardStore.get(player);
     }
 
-    static copy(player, block) {
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
-        if (!blockInv)
+    static copy(player, target, container = target?.getComponent(BlockComponentTypes.Inventory)?.container) {
+        if (!container)
             return;
 
-        const clipboard = QuickFillClipboard.copy(block, blockInv);
+        const clipboard = QuickFillClipboard.copy(target, container);
         if (!clipboard)
             return;
 
@@ -21,22 +20,21 @@ export class QuickFillClipboardController {
         player.onScreenDisplay.setActionBar('§7Quick Fill: copied container to clipboard.');
     }
 
-    static apply(player, block, clipboard, isSneaking) {
+    static apply(player, target, clipboard, isSneaking, container = target?.getComponent(BlockComponentTypes.Inventory)?.container) {
         const playerInv = player.getComponent(EntityComponentTypes.Inventory)?.container;
-        const blockInv = block.getComponent(BlockComponentTypes.Inventory)?.container;
-        if (!playerInv || !blockInv)
+        if (!playerInv || !container)
             return;
 
-        const result = this.execute(player, block, playerInv, blockInv, clipboard, isSneaking);
+        const result = this.execute(player, target, playerInv, container, clipboard, isSneaking);
         this.sendFeedback(player, result, isSneaking);
     }
 
-    static execute(player, block, playerInv, blockInv, clipboard, isSneaking) {
+    static execute(player, target, playerInv, targetInv, clipboard, isSneaking) {
         if (isSneaking)
-            return QuickFillClipboardExecutor.remove(playerInv, block, blockInv, clipboard);
+            return QuickFillClipboardExecutor.remove(playerInv, target, targetInv, clipboard);
         if (player.getGameMode() === GameMode.Creative)
-            return QuickFillClipboardExecutor.applyCreative(block, blockInv, clipboard);
-        return QuickFillClipboardExecutor.applySurvival(playerInv, block, blockInv, clipboard);
+            return QuickFillClipboardExecutor.applyCreative(target, targetInv, clipboard);
+        return QuickFillClipboardExecutor.applySurvival(playerInv, target, targetInv, clipboard);
     }
 
     static deactivate(player) {
