@@ -1,6 +1,17 @@
-import { BooleanRule, Command } from "../../lib/canopy/Canopy";
+import { CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { BooleanRule, PlayerCommandOrigin, VanillaCommand } from "../../lib/canopy/Canopy";
 import { counterChannels } from "../classes/CounterChannels";
+import { ITEM_COUNTER_COLORS, ITEM_COUNTER_MODES } from "../classes/ItemCounterChannels";
 import { broadcastActionBar, formatColorStr } from "../../include/utils";
+
+export const COUNTER_CHANNELS = Object.freeze(['all', ...ITEM_COUNTER_COLORS]);
+
+export const COUNTER_ACTIONS = Object.freeze([
+    'realtime',
+    'reset',
+    'remove',
+    ...ITEM_COUNTER_MODES
+]);
 
 new BooleanRule({
     category: 'Rules',
@@ -11,68 +22,81 @@ new BooleanRule({
     onDisableCallback: () => counterChannels.disable()
 });
 
-const cmd = new Command({
-    name: 'counter',
-    description: { translate: 'commands.counter' },
-    usage: 'counter <color/all/reset/realtime> [<mode>/reset/realtime/remove]',
-    args: [
-        { type: 'string', name: 'argOne' },
-        { type: 'string', name: 'argTwo' }
-    ],
-    callback: counterCommand,
-    contingentRules: ['hopperCounters'],
-    helpEntries: [
-        { usage: 'counter', description: { translate: 'commands.counter.query.all' }, wikiDescription: 'Displays information about the item counts in each channel. This includes metrics like the total items and items per hour, and the same divided up into individual item types. Alias: **`./ct`**' },
-        { usage: 'counter [color/all]', description: { translate: 'commands.counter.query' }, wikiDescription: 'Does the same as `./counter`, but displays info for only one channel. Using the `all` keyword has exactly the same behavior as `./counter`. Alias: **`./ct <color>`** This command can also be triggered with the vanilla command `/scriptevent canopy:counter [color]` (ie. in a command block).' },
-        { usage: 'counter [color/all] realtime', description: { translate: 'commands.counter.realtime' }, wikiDescription: 'Displays information about the item counts using real-world time instead of Minecraft tick-based time to do rate calculations. Alias: **`./ct realtime`**, **`./ct <color|all> realtime`**' },
-        { usage: 'counter [color/all] <count/hr/min/sec>', description: { translate: 'commands.counter.mode' }, wikiDescription: 'Changes the mode of a channel while tracking hopper counters in the InfoDisplay. `count` displays a count of every item that passes through. `hr`, `min`, `sec` displays the number of items per hour, minute, and second respectively. Alias: **`./ct <color|all> <count|hr|min|sec>`**' },
-        { usage: 'counter [color/all] reset', description: { translate: 'commands.counter.reset' }, wikiDescription: 'Resets the count of all channels to zero and restarts the timer. Alias: **`./ct [color|all] reset`**. This command can also be triggered with the vanilla command `/scriptevent canopy:counter [color|all] reset` (ie. in a command block).' },
-        { usage: 'counter [color/all] remove', description: { translate: 'commands.counter.remove' }, wikiDescription: 'Removes all known hoppers in the specified channel or all channels. This will also reset the timer for that channel or all channels. Alias: **`./ct remove`**, **`./ct <color|all> remove`** This command can also be triggered with the vanilla command `/scriptevent canopy:counter [color|all] remove` (ie. in a command block).' }
-    ]
-});
+export class CounterCommand extends VanillaCommand {
+    constructor() {
+        super({
+            name: 'canopy:counter',
+            description: 'commands.counter',
+            enums: [
+                {
+                    name: 'canopy:counterChannel',
+                    values: COUNTER_CHANNELS
+                },
+                {
+                    name: 'canopy:counterAction',
+                    values: COUNTER_ACTIONS
+                }
+            ],
+            optionalParameters: [
+                {
+                    name: 'canopy:counterChannel',
+                    type: CustomCommandParamType.Enum
+                },
+                {
+                    name: 'canopy:counterAction',
+                    type: CustomCommandParamType.Enum
+                }
+            ],
+            permissionLevel: CommandPermissionLevel.Any,
+            allowedSources: [PlayerCommandOrigin],
+            contingentRules: ['hopperCounters'],
+            aliases: ['canopy:ct'],
+            callback: (origin, ...args) => this.counterCommand(origin, ...args),
+            wikiDescription: 'Displays hopper counter statistics for all channels or one wool-color channel. Use `all` to apply an action to every channel. `realtime` displays rates using real-world time, `reset` resets counts, `remove` removes tracked hoppers, and `count`, `hr`, `min`, or `sec` set the InfoDisplay mode. Alias: **`/ct`**.'
+        });
+    }
 
-new Command({
-    name: 'ct',
-    description: { translate: 'commands.counter' },
-    usage: 'ct <color/all/reset/realtime> [<mode>/reset/realtime/remove]',
-    args: [
-        { type: 'string', name: 'argOne' },
-        { type: 'string', name: 'argTwo' }
-    ],
-    callback: counterCommand,
-    contingentRules: ['hopperCounters'],
-    helpHidden: true
-});
+    counterCommand(origin, channel, action) {
+        const player = origin.getSource();
+        const selectedChannel = channel ?? 'all';
 
-function counterCommand(sender, args) {
-    const { argOne, argTwo } = args;
-    
-    if ((!argOne && !argTwo) || (argOne === 'all' && !argTwo))
-        queryAll(sender);
-    else if ((argOne === 'realtime') || (argOne === 'all' && argTwo === 'realtime'))
-        queryAll(sender, { useRealTime: true });
-    else if ((argOne === 'reset') || (argOne === 'all' && argTwo === 'reset'))
-        resetAll(sender);
-    else if (counterChannels.isValidMode(argOne))
-        setAllMode(sender, argOne);
-    else if (argOne === 'all' && counterChannels.isValidMode(argTwo))
-        setAllMode(sender, argTwo);
-    else if ((argOne === 'remove') || (argOne === 'all' && argTwo === 'remove'))
-        removeAll(sender);
-    else if (counterChannels.isValidColor(argOne) && !argTwo)
-        query(sender, argOne);
-    else if (counterChannels.isValidColor(argOne) && argTwo === 'realtime')
-        query(sender, argOne, { useRealTime: true });
-    else if (counterChannels.isValidColor(argOne) && argTwo === 'reset')
-        reset(sender, argOne);
-    else if (counterChannels.isValidColor(argOne) && counterChannels.isValidMode(argTwo))
-        setMode(sender, argOne, argTwo);
-    else if (counterChannels.isValidColor(argOne) && argTwo === 'remove')
-        remove(sender, argOne);
-    else if (argOne && !counterChannels.isValidColor(argOne))
-        sender.sendMessage({ translate: 'commands.counter.channel.notfound', with: [argOne] });
-    else
-        cmd.sendUsage(sender);
+        if (action === void 0) {
+            if (selectedChannel === 'all')
+                queryAll(player);
+            else
+                query(player, selectedChannel);
+            return { status: CustomCommandStatus.Success };
+        }
+
+        if (action === 'realtime') {
+            if (selectedChannel === 'all')
+                queryAll(player, { useRealTime: true });
+            else
+                query(player, selectedChannel, { useRealTime: true });
+        } else if (action === 'reset') {
+            if (selectedChannel === 'all')
+                resetAll(player);
+            else
+                reset(player, selectedChannel);
+        } else if (action === 'remove') {
+            if (selectedChannel === 'all')
+                removeAll(player);
+            else
+                remove(player, selectedChannel);
+        } else if (ITEM_COUNTER_MODES.includes(action)) {
+            if (selectedChannel === 'all')
+                setAllMode(player, action);
+            else
+                setMode(player, selectedChannel, action);
+        } else {
+            return {
+                status: CustomCommandStatus.Failure,
+                message: 'commands.generic.invalidaction'
+            };
+        }
+
+        return { status: CustomCommandStatus.Success };
+    }
 }
 
 function query(sender, color, { useRealTime = false } = {}) {
@@ -86,7 +110,7 @@ function queryAll(sender, { useRealTime = false } = {}) {
 function reset(sender, color) {
     counterChannels.resetCounts(color);
     sender.sendMessage({ translate: 'commands.counter.reset.single', with: [formatColorStr(color)] });
-    broadcastActionBar({ translate: 'commands.counter.reset.single.actionbar', with: [sender.name, formatColorStr(color)]}, sender);
+    broadcastActionBar({ translate: 'commands.counter.reset.single.actionbar', with: [sender.name, formatColorStr(color)] }, sender);
 }
 
 function resetAll(sender) {
@@ -118,5 +142,7 @@ function remove(sender, color) {
     sender.sendMessage({ translate: 'commands.counter.remove.single', with: [formatColorStr(color)] });
     broadcastActionBar({ translate: 'commands.counter.remove.single.actionbar', with: [sender.name, formatColorStr(color)] }, sender);
 }
+
+export const counterCommand = new CounterCommand();
 
 export { query, queryAll };

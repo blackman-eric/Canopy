@@ -1,15 +1,19 @@
 import { system, world } from "@minecraft/server";
 import { Rules } from "../../lib/canopy/Canopy";
 
+export const ITEM_COUNTER_COLORS = Object.freeze([
+    'white', 'light_gray', 'gray', 'black', 'brown', 'red', 'orange', 'yellow',
+    'lime', 'green', 'cyan', 'light_blue', 'blue', 'purple', 'magenta', 'pink'
+]);
+
+export const ITEM_COUNTER_MODES = Object.freeze(['count', 'hr', 'min', 'sec']);
+
 class ItemCounterChannels {
     onTickRunner;
 
     constructor(ChannelClass, controllingRuleID) {
-        ItemCounterChannels.colors = Object.freeze(['white', 'light_gray', 'gray', 'black', 'brown', 'red', 'orange', 'yellow', 'lime', 'green', 'cyan',
-            'light_blue', 'blue', 'purple', 'magenta', 'pink']);
-        ItemCounterChannels.modes = Object.freeze(['count', 'hr', 'min', 'sec']);
-        this.colors = ItemCounterChannels.colors;
-        this.modes = ItemCounterChannels.modes;
+        this.colors = ITEM_COUNTER_COLORS;
+        this.modes = ITEM_COUNTER_MODES;
         this.controllingRuleID = controllingRuleID;
         this.channels = {};
         this.ChannelClass = ChannelClass;
