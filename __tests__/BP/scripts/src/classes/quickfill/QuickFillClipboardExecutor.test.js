@@ -1,10 +1,21 @@
-import { Container, ItemStack } from "@minecraft/server";
+import { Container, EntityComponentTypes, ItemStack } from "@minecraft/server";
 import { QuickFillClipboard } from "../../../../../../Canopy[BP]/scripts/src/classes/quickfill/QuickFillClipboard";
 import { QuickFillClipboardExecutor } from "../../../../../../Canopy[BP]/scripts/src/classes/quickfill/QuickFillClipboardExecutor";
 import { describe, expect, test } from "vitest";
 
 const makeBlock = (typeId = 'minecraft:hopper') => ({ typeId });
 const makeClipboard = (block, container) => QuickFillClipboard.copy(block, container);
+
+const makeEntity = (container, strength = 1) => ({
+    typeId: 'minecraft:llama',
+    getComponent(component) {
+        if (component === EntityComponentTypes.Inventory)
+            return { container, containerType: 'horse', additionalSlotsPerStrength: 3 };
+        if (component === EntityComponentTypes.Strength)
+            return { value: strength };
+    },
+    hasComponent: component => component === EntityComponentTypes.IsChested
+});
 
 describe('QuickFillClipboardExecutor', () => {
     test('creative paste reproduces literal slot amounts', () => {
@@ -194,6 +205,81 @@ describe('QuickFillClipboardExecutor', () => {
         expect(result.incompatible).toBe(true);
     });
 
+    test('creative paste maps clipboard slots to entity cargo only', () => {
+        const sourceBlock = makeBlock();
+        const source = new Container({ size: 5, items: {
+            0: new ItemStack('minecraft:stone', 4),
+            2: new ItemStack('minecraft:dirt', 3)
+        }});
+        const clipboard = makeClipboard(sourceBlock, source);
+        const target = new Container({ size: 16, items: {
+            0: new ItemStack('minecraft:red_carpet'),
+            1: new ItemStack('minecraft:cobblestone'),
+            2: new ItemStack('minecraft:cobblestone'),
+            3: new ItemStack('minecraft:cobblestone'),
+            4: new ItemStack('minecraft:diamond')
+        }});
+        const entity = makeEntity(target);
+
+        const result = QuickFillClipboardExecutor.applyCreative(entity, target, clipboard);
+
+        expect(result.changedSlots).toBe(3);
+        expect(result.skippedSlots).toBe(2);
+        expect(target.getItem(0).typeId).toBe('minecraft:red_carpet');
+        expect(target.getItem(1).typeId).toBe('minecraft:stone');
+        expect(target.getItem(1).amount).toBe(4);
+        expect(target.getItem(2)).toBeUndefined();
+        expect(target.getItem(3).typeId).toBe('minecraft:dirt');
+        expect(target.getItem(3).amount).toBe(3);
+        expect(target.getItem(4).typeId).toBe('minecraft:diamond');
+    });
+
+    test('survival paste maps clipboard slots to entity cargo', () => {
+        const sourceBlock = makeBlock();
+        const source = new Container({ size: 5, items: {
+            0: new ItemStack('minecraft:stone', 4)
+        }});
+        const clipboard = makeClipboard(sourceBlock, source);
+        const target = new Container({ size: 16, items: {
+            0: new ItemStack('minecraft:red_carpet'),
+            1: new ItemStack('minecraft:stone')
+        }});
+        const entity = makeEntity(target);
+        const player = new Container({ size: 9, items: {
+            0: new ItemStack('minecraft:stone', 3)
+        }});
+
+        const result = QuickFillClipboardExecutor.applySurvival(player, entity, target, clipboard);
+
+        expect(result.changedSlots).toBe(1);
+        expect(target.getItem(0).typeId).toBe('minecraft:red_carpet');
+        expect(target.getItem(1).amount).toBe(4);
+        expect(player.getItem(0)).toBeUndefined();
+    });
+
+    test('clipboard remove maps to entity cargo without touching equipment or hidden slots', () => {
+        const sourceBlock = makeBlock();
+        const source = new Container({ size: 5, items: {
+            0: new ItemStack('minecraft:stone', 2)
+        }});
+        const clipboard = makeClipboard(sourceBlock, source);
+        const target = new Container({ size: 16, items: {
+            0: new ItemStack('minecraft:red_carpet'),
+            1: new ItemStack('minecraft:stone', 5),
+            4: new ItemStack('minecraft:stone', 7)
+        }});
+        const entity = makeEntity(target);
+        const player = new Container({ size: 9 });
+
+        const result = QuickFillClipboardExecutor.remove(player, entity, target, clipboard);
+
+        expect(result.changedSlots).toBe(1);
+        expect(target.getItem(0).typeId).toBe('minecraft:red_carpet');
+        expect(target.getItem(1).amount).toBe(3);
+        expect(target.getItem(4).amount).toBe(7);
+        expect(player.getItem(0).amount).toBe(2);
+    });
+
     test('creative paste resolves a wildcard using the supplied group item', () => {
         const block = makeBlock();
         const clipboard = new QuickFillClipboard({
@@ -290,6 +376,66 @@ describe('QuickFillClipboardExecutor', () => {
         expect(target.getItem(0).typeId).toBe('minecraft:dirt');
         expect(target.getItem(0).amount).toBe(6);
         expect(player.getItem(0).typeId).toBe('minecraft:dirt');
+        expect(player.getItem(0).amount).toBe(4);
+    });
+
+    test('wildcard paste maps the resolved item to entity cargo', () => {
+        const clipboard = new QuickFillClipboard({
+            shape: 'generic:5',
+            slots: [new ItemStack('minecraft:stone', 4)],
+            wildcardGroups: [0]
+        });
+        const target = new Container({
+            size: 16,
+            items: {
+                0: new ItemStack('minecraft:red_carpet'),
+                1: new ItemStack('minecraft:cobblestone')
+            }
+        });
+        const entity = makeEntity(target);
+
+        const result = QuickFillClipboardExecutor.applyCreative(
+            entity,
+            target,
+            clipboard,
+            [new ItemStack('minecraft:dirt')]
+        );
+
+        expect(result.changedSlots).toBe(1);
+        expect(target.getItem(0).typeId).toBe('minecraft:red_carpet');
+        expect(target.getItem(1).typeId).toBe('minecraft:dirt');
+        expect(target.getItem(1).amount).toBe(4);
+    });
+
+    test('wildcard remove maps to entity cargo without touching protected slots', () => {
+        const clipboard = new QuickFillClipboard({
+            shape: 'generic:5',
+            slots: [new ItemStack('minecraft:stone', 4)],
+            wildcardGroups: [0]
+        });
+        const target = new Container({
+            size: 16,
+            items: {
+                0: new ItemStack('minecraft:red_carpet'),
+                1: new ItemStack('minecraft:dirt', 10),
+                4: new ItemStack('minecraft:dirt', 7)
+            }
+        });
+        const entity = makeEntity(target);
+        const player = new Container({ size: 9 });
+
+        const result = QuickFillClipboardExecutor.remove(
+            player,
+            entity,
+            target,
+            clipboard,
+            [new ItemStack('minecraft:dirt')]
+        );
+
+        expect(result.changedSlots).toBe(1);
+        expect(target.getItem(0).typeId).toBe('minecraft:red_carpet');
+        expect(target.getItem(1).amount).toBe(6);
+        expect(target.getItem(4).amount).toBe(7);
         expect(player.getItem(0).amount).toBe(4);
     });
 });
