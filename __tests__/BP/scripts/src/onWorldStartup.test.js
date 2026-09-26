@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { world, resetWorldState } from '@minecraft/server';
 import { startWorldSystems } from '../../../../Canopy[BP]/scripts/src/onWorldStartup';
-import { simplayerRejoining } from '../../../../Canopy[BP]/scripts/src/rules/simplayer/simplayerRejoining';
 import { playerStartLookingAtUnderstudy } from '../../../../Canopy[BP]/scripts/src/classes/simplayer/events/PlayerStartLookingAtUnderstudyEvent';
 import { playerStopLookingAtUnderstudy } from '../../../../Canopy[BP]/scripts/src/classes/simplayer/events/PlayerStopLookingAtUnderstudyEvent';
 
