@@ -3,7 +3,7 @@ import { world, BlockComponentTypes, ItemStack } from "@minecraft/server";
 
 class GeneratorChannel extends ItemCounterChannel {
     constructor(color) {
-        super(color, `${color}GeneratorChannel`);
+        super(color, `${color}GeneratorChannel`, `Generator - ${color}`);
     }
 
     getQueryOutput(useRealTime = false) {

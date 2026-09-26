@@ -107,7 +107,7 @@ class QuickFillContainer extends AbilityRule {
         const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
         system.run(() => {
             if (clipboard) {
-                QuickFillClipboardController.apply(player, target, clipboard, playerIsSneaking, targetInv);
+                QuickFillClipboardController.apply(player, target, clipboard, playerIsSneaking, targetInv, handItemStack);
                 return;
             }
             if (playerIsSneaking) {
