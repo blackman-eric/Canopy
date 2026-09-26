@@ -1,6 +1,16 @@
-import { BooleanRule, Command } from "../../lib/canopy/Canopy";
+import { CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { BooleanRule, PlayerCommandOrigin, VanillaCommand } from "../../lib/canopy/Canopy";
 import { generatorChannels } from "../classes/GeneratorChannels";
+import { ITEM_COUNTER_COLORS } from "../classes/ItemCounterChannels";
 import { formatColorStr, broadcastActionBar } from "../../include/utils";
+
+export const GENERATOR_CHANNELS = Object.freeze(['all', ...ITEM_COUNTER_COLORS]);
+
+export const GENERATOR_ACTIONS = Object.freeze([
+    'realtime',
+    'reset',
+    'remove'
+]);
 
 new BooleanRule({
     category: 'Rules',
@@ -11,67 +21,83 @@ new BooleanRule({
     onDisableCallback: () => generatorChannels.disable()
 });
 
-const cmd = new Command({
-    name: 'generator',
-    description: { translate: 'commands.generator' },
-    usage: 'generator <color/all/reset/realtime> [reset/realtime/remove]',
-    args: [
-        { type: 'string', name: 'argOne' },
-        { type: 'string', name: 'argTwo' }
-    ],
-    callback: generatorCommand,
-    contingentRules: ['hopperGenerators'],
-    helpEntries: [
-        { usage: 'generator', description: { translate: 'commands.generator.query.all' }, wikiDescription: 'Displays information about the item counts in each channel. This includes metrics like the total items and items per hour, and the same divided up into individual item types. Alias: **`./gt`**' },
-        { usage: 'generator [color/all]', description: { translate: 'commands.generator.query' }, wikiDescription: 'Does the same as `./generator`, but displays info for only one channel. Using the `all` keyword has exactly the same behavior as `./generator`. Alias: **`./gt <color>`** This command can also be triggered with the vanilla command `/scriptevent canopy:generator [color]` (ie. in a command block).' },
-        { usage: 'generator [color/all] realtime', description: { translate: 'commands.generator.realtime' }, wikiDescription: 'Displays information about the item counts using real-world time instead of Minecraft tick-based time to do rate calculations. Alias: **`./gt realtime`**, **`./gt <color|all> realtime`**' },
-        { usage: 'generator [color/all] reset', description: { translate: 'commands.generator.reset' }, wikiDescription: 'Resets the count of all channels to zero and restarts the timer. Alias: **`./gt [color|all] reset`**. This command can also be triggered with the vanilla command `/scriptevent canopy:generator [color|all] reset` (ie. in a command block).' },
-        { usage: 'generator [color/all remove', description: { translate: 'commands.counter.remove' }, wikiDescription: 'Removes all known hoppers in the specified channel or all channels. This will also reset the timer for that channel or all channels. Alias: **`./gt remove`**, **`./gt <color|all> remove`** This command can also be triggered with the vanilla command `/scriptevent canopy:generator [color|all] remove` (ie. in a command block).' }
-    ]
-});
+export class GeneratorCommand extends VanillaCommand {
+    constructor() {
+        super({
+            name: 'canopy:generator',
+            description: 'commands.generator',
+            enums: [
+                {
+                    name: 'canopy:generatorChannel',
+                    values: GENERATOR_CHANNELS
+                },
+                {
+                    name: 'canopy:generatorAction',
+                    values: GENERATOR_ACTIONS
+                }
+            ],
+            optionalParameters: [
+                {
+                    name: 'canopy:generatorChannel',
+                    type: CustomCommandParamType.Enum
+                },
+                {
+                    name: 'canopy:generatorAction',
+                    type: CustomCommandParamType.Enum
+                }
+            ],
+            permissionLevel: CommandPermissionLevel.Any,
+            allowedSources: [PlayerCommandOrigin],
+            contingentRules: ['hopperGenerators'],
+            aliases: ['canopy:gt'],
+            callback: (origin, ...args) => this.generatorCommand(origin, ...args),
+            wikiDescription: 'Displays hopper generator statistics for all channels or one wool-color channel. Use `all` to apply an action to every channel. `realtime` displays rates using real-world time, `reset` resets counts, and `remove` removes tracked hoppers. Alias: **`/gt`**.'
+        });
+    }
 
-new Command({
-    name: 'gt',
-    description: { translate: 'commands.generator' },
-    usage: 'gt <color/all/reset/realtime> [reset/realtime/remove]',
-    args: [
-        { type: 'string', name: 'argOne' },
-        { type: 'string', name: 'argTwo' }
-    ],
-    callback: generatorCommand,
-    contingentRules: ['hopperGenerators'],
-    helpHidden: true
-});
+    generatorCommand(origin, channel, action) {
+        const player = origin.getSource();
+        const selectedChannel = channel ?? 'all';
 
-function generatorCommand(sender, args) {
-    const { argOne, argTwo } = args;
+        if (action === void 0) {
+            if (selectedChannel === 'all')
+                queryAll(player);
+            else
+                query(player, selectedChannel);
 
-    if ((!argOne && !argTwo) || (argOne === 'all' && !argTwo))
-        queryAll(sender);
-    else if ((argOne === 'realtime') || (argOne === 'all' && argTwo === 'realtime'))
-        queryAll(sender, { useRealTime: true });
-    else if ((argOne === 'reset') || (argOne === 'all' && argTwo === 'reset'))
-        resetAll(sender);
-    else if ((argOne === 'remove') || (argOne === 'all' && argTwo === 'remove'))
-        removeAll(sender);
-    else if (generatorChannels.isValidColor(argOne) && !argTwo)
-        query(sender, argOne);
-    else if (generatorChannels.isValidColor(argOne) && argTwo === 'realtime')
-        query(sender, argOne, { useRealTime: true });
-    else if (generatorChannels.isValidColor(argOne) && argTwo === 'reset')
-        reset(sender, argOne);
-    else if (generatorChannels.isValidColor(argOne) && argTwo === 'remove')
-        remove(sender, argOne);
-    else if (argOne && !generatorChannels.isValidColor(argOne))
-        sender.sendMessage({ translate: 'commands.counter.channel.notfound', with: [argOne] });
-    else
-        cmd.sendUsage(sender);
+            return { status: CustomCommandStatus.Success };
+        }
+
+        if (action === 'realtime') {
+            if (selectedChannel === 'all')
+                queryAll(player, { useRealTime: true });
+            else
+                query(player, selectedChannel, { useRealTime: true });
+        } else if (action === 'reset') {
+            if (selectedChannel === 'all')
+                resetAll(player);
+            else
+                reset(player, selectedChannel);
+        } else if (action === 'remove') {
+            if (selectedChannel === 'all')
+                removeAll(player);
+            else
+                remove(player, selectedChannel);
+        } else {
+            return {
+                status: CustomCommandStatus.Failure,
+                message: 'commands.generic.invalidaction'
+            };
+        }
+
+        return { status: CustomCommandStatus.Success };
+    }
 }
 
 function reset(sender, color) {
     generatorChannels.resetCounts(color);
     sender.sendMessage({ translate: 'commands.generator.reset.single', with: [formatColorStr(color)] });
-    broadcastActionBar({ translate: 'commands.generator.reset.single.actionbar', with: [sender.name, formatColorStr(color)]}, sender);
+    broadcastActionBar({ translate: 'commands.generator.reset.single.actionbar', with: [sender.name, formatColorStr(color)] }, sender);
 }
 
 function resetAll(sender) {
@@ -99,5 +125,7 @@ function removeAll(sender) {
     sender.sendMessage({ translate: 'commands.generator.remove.all' });
     broadcastActionBar({ translate: 'commands.generator.remove.all.actionbar', with: [sender.name] }, sender);
 }
+
+export const generatorCommand = new GeneratorCommand();
 
 export { query, queryAll };
